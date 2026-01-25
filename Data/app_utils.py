@@ -58,8 +58,11 @@ def get_metadata_for_sample(db_path: Path, sample_id: str) -> Dict:
     query = "SELECT * FROM v_sample_details WHERE sample_id = ?"
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute(query, (sample_id,)).fetchone()
-        return dict(row) if row else {}
+        try:
+            row = conn.execute(query, (sample_id,)).fetchone()
+            return dict(row) if row else {}
+        except sqlite3.OperationalError:
+            return {}
 
 
 def load_raw_curve(file_path: Path) -> Optional[pd.DataFrame]:

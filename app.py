@@ -43,6 +43,9 @@ if results_df.empty:
     st.error("Results file not found. Run the analysis pipeline first.")
     st.stop()
 
+if not db_path.exists():
+    st.warning("Database not found. Metadata panel will be empty until a database is provided.")
+
 st.sidebar.header("Filters")
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = str(uuid4())
