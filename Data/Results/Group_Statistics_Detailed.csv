@@ -1,0 +1,4 @@
+Subgroup,MaxLoad_Mean,MaxLoad_Std,Stiffness_Mean,Stiffness_Std,Energy_Mean,Energy_Std,Count,Sample_List
+MSC,154.59,19.16,43.68,11.34,670.55,351.8,10,"B5, B7, B9, D10, D11, D12, D13, D14, D15, D9"
+NON,418.17,145.11,176.36,87.73,843.63,382.59,23,"B10, B11, B5, B6, B7, B9, C1, C2, D1, D10, D11, D12, D13, D14, D15, D2, D3, D4, D5, D6, D7, D8, D9"
+TFL,112.72,47.73,28.17,17.22,744.93,1020.77,14,"B1, B10, B11, C1, C2, D1, D2, D3, D4, D5, D6, D7, D8"

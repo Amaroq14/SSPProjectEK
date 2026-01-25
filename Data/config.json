@@ -1,0 +1,19 @@
+{
+  "data_paths": {
+    "selected_data_dir": "Selected_data",
+    "results_dir": "Results",
+    "raw_b_series_dir": "../SSP_Project/Raw_Data",
+    "database_dir": "database",
+    "database_path": "database/ssp_study.db",
+    "results_csv": "Results/Experiment_Master_Log_Detailed.csv"
+  },
+  "groups": {
+    "TFL_IDS": ["B1", "B10", "B11", "C1", "C2", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"],
+    "MSC_IDS": ["B5", "B7", "B9", "D9", "D10", "D11", "D12", "D13", "D14", "D15"]
+  },
+  "analysis": {
+    "stiffness_r2_threshold": 0.99,
+    "stiffness_window_fraction": 0.1,
+    "stiffness_min_window": 5
+  }
+}
