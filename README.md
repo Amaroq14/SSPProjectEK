@@ -30,7 +30,7 @@ python update_results.py
 
 ### 5. Launch Interactive App
 ```bash
-streamlit run Data/app.py
+streamlit run app.py
 ```
 
 Manual stiffness selections are stored in:
@@ -54,7 +54,6 @@ Data/
 ├── analysis_pipeline.py        # Canonical analysis logic
 ├── run_analysis.py             # Entry point script
 ├── convert_b_series.py         # Convert legacy B-series TXT files
-├── app.py                      # Interactive Streamlit UI
 ├── app_utils.py                # App helper utilities
 ├── Selected_data/              # Input CSVs
 ├── Results/                    # Output results + plots
