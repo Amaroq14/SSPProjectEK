@@ -10,6 +10,21 @@
 
 ---
 
+## Repository Contents
+
+```
+├── Analysis_Pipeline.ipynb    # Main analysis notebook
+├── README.md                  # This file
+├── requirements.txt           # Python dependencies
+├── ssp_config.py             # Configuration loader (required)
+├── utils.py                  # Shared utilities (required)
+├── analysis_pipeline.py      # Core analysis functions (required)
+├── config.json               # Configuration file (required)
+└── Selected_data/            # CSV data files (required)
+```
+
+---
+
 ## Overview
 
 This Jupyter notebook implements the biomechanical analysis pipeline for evaluating surgical repair methods of chronic supraspinatus tendon tears in a rabbit model. The study compares three groups:
@@ -143,22 +158,30 @@ TFL allograft with bone marrow mesenchymal stem cells.
 
 ## How to Run
 
-### Prerequisites
+### 1. Install Dependencies
 ```bash
-pip install pandas numpy matplotlib scikit-learn plotly
+pip install -r requirements.txt
 ```
 
-### Required Files
+### 2. Required Files
 The notebook imports from these modules (must be in the same directory):
-- `ssp_config.py` - Configuration loader
-- `utils.py` - Shared utilities
-- `analysis_pipeline.py` - Core analysis functions
-- `config.json` - Configuration file
 
-### Running the Notebook
-1. Open `Analysis_Pipeline.ipynb` in Jupyter Notebook/Lab
-2. Run all cells sequentially
-3. Results are saved to `Results/` folder
+| File | Description |
+|------|-------------|
+| `ssp_config.py` | Configuration loader |
+| `utils.py` | Shared utilities (parsing, validation) |
+| `analysis_pipeline.py` | Core analysis functions |
+| `config.json` | Paths and group assignments |
+| `Selected_data/` | Directory containing CSV data files |
+
+### 3. Run the Notebook
+```bash
+jupyter notebook Analysis_Pipeline.ipynb
+```
+Or open in JupyterLab / VS Code and run all cells sequentially.
+
+### 4. Output
+Results are saved to the `Results/` folder (created automatically).
 
 ---
 
