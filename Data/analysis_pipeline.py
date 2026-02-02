@@ -142,7 +142,7 @@ def process_all_files(
             x = df_trunc["Crossheadmm"].values
             y = df_trunc[y_col].values
 
-            energy_mJ = np.trapz(y, x)
+            energy_mJ = np.trapezoid(y, x)
 
             window_span = max(min_window, int(len(x) * window_fraction))
             slope, intercept, r2, idx_start, idx_end = find_best_stiffness(
