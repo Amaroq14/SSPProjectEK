@@ -1,9 +1,22 @@
 """
 Core analysis pipeline for SSP biomechanics data.
+=================================================
+
+This module provides the core analysis functions for processing
+biomechanical test data from the supraspinatus tear study.
+
+Key functions:
+- classify_sample: Parse filenames to determine sample groups
+- find_best_stiffness: Find the stiffest linear region in load-displacement curves
+- process_all_files: Batch process all data files
+- run_pipeline: Execute the complete analysis pipeline
 """
 
+from __future__ import annotations
+
+import logging
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -11,45 +24,26 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 from ssp_config import get_config_paths, get_group_ids
+from utils import (
+    classify_sample,
+    safe_trapezoid,
+    validate_raw_data,
+    normalize_load_column,
+)
 
+# Configure module logger
+logger = logging.getLogger(__name__)
 
-def classify_sample(filename: str, tfl_ids: list, msc_ids: list) -> Tuple[str, str, str]:
-    """
-    Parse filename to find Sample ID, Condition (NO/OPER), and Subgroup.
-    """
-    parts = filename.replace(".csv", "").split("_")
-
-    condition = "Unknown"
-    if "NO" in parts:
-        condition = "NO"
-    elif "OPER" in parts:
-        condition = "OPER"
-
-    sample_id = "Unknown"
-    subgroup = "Unassigned"
-
-    if condition == "NO":
-        subgroup = "NON"
-
-    for part in parts:
-        if part in tfl_ids:
-            sample_id = part
-            if condition == "OPER":
-                subgroup = "TFL"
-            break
-        if part in msc_ids:
-            sample_id = part
-            if condition == "OPER":
-                subgroup = "MSC"
-            break
-
-    if sample_id == "Unknown":
-        for part in parts:
-            if part.startswith(("B", "C", "D")) and len(part) <= 3:
-                sample_id = part
-                break
-
-    return sample_id, condition, subgroup
+# Re-export classify_sample for backward compatibility
+__all__ = [
+    "classify_sample",
+    "find_best_stiffness",
+    "process_all_files",
+    "generate_statistics",
+    "save_results",
+    "create_plots",
+    "run_pipeline",
+]
 
 
 def find_best_stiffness(
@@ -60,17 +54,32 @@ def find_best_stiffness(
 ) -> Tuple[float, float, float, int, int]:
     """
     Scan the curve to find the stiffest linear region.
-    Returns: slope, intercept, r_squared, start_idx, end_idx
+    
+    Uses a sliding window approach to find the region with the highest
+    stiffness (slope) while maintaining good linearity (R² above threshold).
+    
+    Args:
+        x: Displacement values (mm)
+        y: Load values (N)
+        window_size: Number of points in the sliding window
+        r2_threshold: Minimum R² value to consider a region as linear
+        
+    Returns:
+        Tuple of (slope, intercept, r_squared, start_idx, end_idx)
+        Returns (nan, nan, nan, 0, 0) if no valid region is found.
     """
     best_r2 = -np.inf
-    best_slope = 0
-    best_params = (np.nan, np.nan, np.nan, 0, 0)
+    best_slope = 0.0
+    best_params: Tuple[float, float, float, int, int] = (np.nan, np.nan, np.nan, 0, 0)
 
-    x = np.array(x)
-    y = np.array(y)
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
 
     n_points = len(x)
     if n_points < window_size:
+        logger.warning(
+            f"Insufficient data points ({n_points}) for window size ({window_size})"
+        )
         return best_params
 
     for i in range(n_points - window_size):
@@ -81,41 +90,57 @@ def find_best_stiffness(
         y_pred = model.predict(x_win)
 
         r2 = r2_score(y_win, y_pred)
-        slope = model.coef_[0]
+        slope = float(model.coef_[0])
+        intercept = float(model.intercept_)
 
+        # Prefer regions with R² above threshold and highest slope
         if r2 >= r2_threshold:
             if slope > best_slope:
                 best_slope = slope
-                best_params = (slope, model.intercept_, r2, i, i + window_size)
+                best_params = (slope, intercept, r2, i, i + window_size)
 
+        # Fallback: if no region meets threshold, use best R²
         if r2 > best_r2 and best_slope == 0:
             best_r2 = r2
-            best_params = (slope, model.intercept_, r2, i, i + window_size)
+            best_params = (slope, intercept, r2, i, i + window_size)
 
     return best_params
 
 
 def process_all_files(
     data_dir: Path,
-    tfl_ids: list,
-    msc_ids: list,
+    tfl_ids: List[str],
+    msc_ids: List[str],
     r2_threshold: float,
     window_fraction: float,
     min_window: int
 ) -> Optional[pd.DataFrame]:
-    """Process all CSV files in the data folder."""
-    print("\n" + "=" * 60)
-    print("SSP BIOMECHANICS ANALYSIS PIPELINE")
-    print("=" * 60)
+    """
+    Process all CSV files in the data folder.
+    
+    Args:
+        data_dir: Path to directory containing CSV data files
+        tfl_ids: List of subject IDs in the TFL treatment group
+        msc_ids: List of subject IDs in the MSC treatment group
+        r2_threshold: Minimum R² for linear region detection
+        window_fraction: Fraction of data points for sliding window
+        min_window: Minimum window size in data points
+        
+    Returns:
+        DataFrame with analysis results, or None if processing fails.
+    """
+    logger.info("=" * 60)
+    logger.info("SSP BIOMECHANICS ANALYSIS PIPELINE")
+    logger.info("=" * 60)
 
     if not data_dir.exists():
-        print(f"\n[X] Error: Folder not found: {data_dir}")
+        logger.error(f"Folder not found: {data_dir}")
         return None
 
     files = sorted([f for f in data_dir.iterdir() if f.suffix.lower() == ".csv"])
-    data_records = []
+    data_records: List[Dict] = []
 
-    print(f"\nProcessing {len(files)} files...\n")
+    logger.info(f"Processing {len(files)} files...")
 
     for file_path in files:
         filename = file_path.name
@@ -123,27 +148,31 @@ def process_all_files(
             s_id, cond, sub = classify_sample(filename, tfl_ids, msc_ids)
 
             if cond == "Unknown":
-                print(f"  [!] Skipping {filename}: Could not determine NO/OPER.")
+                logger.warning(f"Skipping {filename}: Could not determine NO/OPER.")
                 continue
 
             df = pd.read_csv(file_path)
-
-            if "LoadN" in df.columns:
-                y_col = "LoadN"
-            elif "LoadkN" in df.columns:
-                df["LoadN"] = df["LoadkN"] * 1000
-                y_col = "LoadN"
-            else:
-                print(f"  [!] Skipping {filename}: No load column found.")
+            
+            # Validate data
+            validation_errors = validate_raw_data(df)
+            if validation_errors:
+                logger.warning(f"Skipping {filename}: {'; '.join(validation_errors)}")
                 continue
+            
+            # Normalize load column
+            df = normalize_load_column(df)
+            y_col = "LoadN"
 
+            # Truncate at max load (failure point)
             max_idx = df[y_col].idxmax()
             df_trunc = df.iloc[: max_idx + 1].copy()
             x = df_trunc["Crossheadmm"].values
             y = df_trunc[y_col].values
 
-            energy_mJ = np.trapezoid(y, x)
+            # Calculate energy (area under curve)
+            energy_mJ = safe_trapezoid(y, x)
 
+            # Find stiffness using sliding window
             window_span = max(min_window, int(len(x) * window_fraction))
             slope, intercept, r2, idx_start, idx_end = find_best_stiffness(
                 x, y, window_span, r2_threshold
@@ -154,7 +183,7 @@ def process_all_files(
                 "Filename": filename,
                 "SampleID": s_id,
                 "Subgroup": sub,
-                "MaxLoad_N": df[y_col].max(),
+                "MaxLoad_N": float(df[y_col].max()),
                 "Stiffness_N_mm": stiffness_N_mm,
                 "Energy_mJ": energy_mJ,
                 "R2_Score": r2,
@@ -162,27 +191,41 @@ def process_all_files(
                 "Linear_End_Idx": idx_end
             })
 
-            print(
-                f"  [OK] {filename} -> {sub}: "
+            logger.info(
+                f"[OK] {filename} -> {sub}: "
                 f"MaxLoad={df[y_col].max():.1f}N, Stiffness={stiffness_N_mm:.1f}N/mm"
             )
 
+        except pd.errors.EmptyDataError:
+            logger.error(f"Empty data file: {filename}")
+        except pd.errors.ParserError as e:
+            logger.error(f"CSV parsing error in {filename}: {e}")
+        except KeyError as e:
+            logger.error(f"Missing column in {filename}: {e}")
         except Exception as e:
-            print(f"  [X] Error processing {filename}: {e}")
+            logger.error(f"Unexpected error processing {filename}: {e}", exc_info=True)
 
     metadata = pd.DataFrame(data_records)
-    print(f"\n  Processed {len(metadata)} samples successfully.")
+    logger.info(f"Processed {len(metadata)} samples successfully.")
 
     return metadata
 
 
 def generate_statistics(metadata: pd.DataFrame) -> pd.DataFrame:
-    """Generate group statistics."""
-    print("\n" + "=" * 60)
-    print("GROUP STATISTICS")
-    print("=" * 60)
+    """
+    Generate group statistics from the analysis results.
+    
+    Args:
+        metadata: DataFrame with analysis results from process_all_files()
+        
+    Returns:
+        DataFrame with summary statistics grouped by Subgroup.
+    """
+    logger.info("=" * 60)
+    logger.info("GROUP STATISTICS")
+    logger.info("=" * 60)
 
-    def list_ids(series):
+    def list_ids(series: pd.Series) -> str:
         return ", ".join(sorted(series.unique()))
 
     stats = metadata.groupby("Subgroup").agg(
@@ -196,38 +239,70 @@ def generate_statistics(metadata: pd.DataFrame) -> pd.DataFrame:
         Sample_List=("SampleID", list_ids)
     ).round(2)
 
-    print("\n")
-    print(stats.to_string())
+    logger.info("\n" + stats.to_string())
 
     return stats
 
 
-def save_results(metadata: pd.DataFrame, stats: pd.DataFrame, results_dir: Path) -> None:
-    """Save results to CSV files."""
-    print("\n" + "=" * 60)
-    print("SAVING RESULTS")
-    print("=" * 60)
+def save_results(
+    metadata: pd.DataFrame,
+    stats: pd.DataFrame,
+    results_dir: Path
+) -> Tuple[Path, Path]:
+    """
+    Save analysis results to CSV files.
+    
+    Args:
+        metadata: DataFrame with detailed sample results
+        stats: DataFrame with group statistics
+        results_dir: Directory to save output files
+        
+    Returns:
+        Tuple of (detail_path, stats_path) for the saved files.
+    """
+    logger.info("=" * 60)
+    logger.info("SAVING RESULTS")
+    logger.info("=" * 60)
 
     results_dir.mkdir(parents=True, exist_ok=True)
 
     detail_path = results_dir / "Experiment_Master_Log_Detailed.csv"
     metadata.to_csv(detail_path, index=False)
-    print(f"\n  Saved: {detail_path}")
+    logger.info(f"Saved: {detail_path}")
 
     stats_path = results_dir / "Group_Statistics_Detailed.csv"
     stats.to_csv(stats_path)
-    print(f"  Saved: {stats_path}")
+    logger.info(f"Saved: {stats_path}")
+    
+    return detail_path, stats_path
 
 
-def create_plots(metadata: pd.DataFrame, results_dir: Path) -> None:
-    """Create summary plots."""
-    print("\n" + "=" * 60)
-    print("GENERATING PLOTS")
-    print("=" * 60)
+def create_plots(metadata: pd.DataFrame, results_dir: Path) -> Path:
+    """
+    Create summary bar plots for each treatment group.
+    
+    Args:
+        metadata: DataFrame with analysis results
+        results_dir: Directory to save the plot
+        
+    Returns:
+        Path to the saved plot file.
+    """
+    logger.info("=" * 60)
+    logger.info("GENERATING PLOTS")
+    logger.info("=" * 60)
 
     import matplotlib.pyplot as plt
 
-    plt.style.use("seaborn-v0_8-whitegrid")
+    # Use a style that's available in most matplotlib versions
+    try:
+        plt.style.use("seaborn-v0_8-whitegrid")
+    except OSError:
+        try:
+            plt.style.use("seaborn-whitegrid")
+        except OSError:
+            logger.debug("Seaborn style not available, using default")
+    
     plt.rcParams["figure.figsize"] = [10, 6]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -244,9 +319,10 @@ def create_plots(metadata: pd.DataFrame, results_dir: Path) -> None:
         axes[i].errorbar(groups, means, yerr=stds, fmt="none", color="black", capsize=5)
 
         for j, bar in enumerate(bars):
+            std_val = stds[j] if not np.isnan(stds[j]) else 0
             axes[i].text(
                 bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + stds[j] + 5,
+                bar.get_height() + std_val + 5,
                 f"n={counts[j]}",
                 ha="center",
                 va="bottom",
@@ -268,11 +344,33 @@ def create_plots(metadata: pd.DataFrame, results_dir: Path) -> None:
     plt.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close()
 
-    print(f"\n  Saved: {plot_path}")
+    logger.info(f"Saved: {plot_path}")
+    return plot_path
 
 
-def run_pipeline(config: Dict, data_root: Path) -> None:
-    """Run the full analysis pipeline."""
+def run_pipeline(config: Dict, data_root: Path) -> Optional[pd.DataFrame]:
+    """
+    Run the full analysis pipeline.
+    
+    This is the main entry point that orchestrates the entire analysis:
+    1. Load configuration
+    2. Process all data files
+    3. Generate statistics
+    4. Save results and create plots
+    
+    Args:
+        config: Configuration dictionary (from config.json)
+        data_root: Root directory for data files
+        
+    Returns:
+        DataFrame with analysis results, or None if processing fails.
+    """
+    # Configure logging for pipeline run
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(message)s'
+    )
+    
     paths = get_config_paths(config, data_root)
     data_dir = paths["selected_data_dir"]
     results_dir = paths["results_dir"]
@@ -294,19 +392,21 @@ def run_pipeline(config: Dict, data_root: Path) -> None:
     )
 
     if metadata is None or len(metadata) == 0:
-        print("\n[X] No data processed. Check your data folder.")
-        return
+        logger.error("No data processed. Check your data folder.")
+        return None
 
     stats = generate_statistics(metadata)
     save_results(metadata, stats, results_dir)
     create_plots(metadata, results_dir)
 
-    print("\n" + "=" * 60)
-    print("[OK] ANALYSIS COMPLETE!")
-    print("=" * 60)
-    print(f"\n  Total samples processed: {len(metadata)}")
-    print(f"  Results saved to: {results_dir}")
-    print("\n  Files generated:")
-    print("    - Experiment_Master_Log_Detailed.csv")
-    print("    - Group_Statistics_Detailed.csv")
-    print("    - Combined_Group_Plots.png")
+    logger.info("=" * 60)
+    logger.info("[OK] ANALYSIS COMPLETE!")
+    logger.info("=" * 60)
+    logger.info(f"Total samples processed: {len(metadata)}")
+    logger.info(f"Results saved to: {results_dir}")
+    logger.info("Files generated:")
+    logger.info("  - Experiment_Master_Log_Detailed.csv")
+    logger.info("  - Group_Statistics_Detailed.csv")
+    logger.info("  - Combined_Group_Plots.png")
+    
+    return metadata

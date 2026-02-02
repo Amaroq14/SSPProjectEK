@@ -16,12 +16,18 @@ Usage:
     stats = db.get_group_statistics()
 """
 
+from __future__ import annotations
+
+import logging
 import sqlite3
-import pandas as pd
+from datetime import date, datetime
 from pathlib import Path
-from datetime import datetime, date
-from typing import Optional, List, Dict, Union
-import os
+from typing import Any, Dict, List, Optional, Union
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
 
 class SSPDatabase:
     """Database manager for SSP biomechanics study data."""
@@ -59,7 +65,7 @@ class SSPDatabase:
                 self.conn.executescript(f.read())
         self.conn.commit()
     
-    def _initialize_treatment_groups(self):
+    def _initialize_treatment_groups(self) -> None:
         """Insert default treatment group definitions."""
         groups = [
             ('NON', 'Intact/Control', 'Non-operated contralateral shoulder serving as internal control', None, False),
@@ -73,8 +79,11 @@ class SSPDatabase:
                     (group_id, group_name, description, graft_type, has_stem_cells)
                     VALUES (?, ?, ?, ?, ?)
                 """, group)
-            except sqlite3.Error:
+            except sqlite3.IntegrityError:
+                # Group already exists, ignore
                 pass
+            except sqlite3.Error as e:
+                logger.warning(f"Failed to insert treatment group {group[0]}: {e}")
         self.conn.commit()
     
     # =========================================================================
@@ -488,10 +497,7 @@ class SSPDatabase:
             test_date = None
             parts = filename.split('_')
             if len(parts) >= 2:
-                try:
-                    test_date = parts[1]  # e.g., '2024-10-26'
-                except:
-                    pass
+                test_date = parts[1]  # e.g., '2024-10-26'
             
             # Add test record
             test_id = self.add_test(

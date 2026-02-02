@@ -1,11 +1,16 @@
 """
 Utilities for the SSP Streamlit app.
+=====================================
+
+This module provides helper functions for the interactive Streamlit application,
+including data loading, metadata lookup, and manual stiffness calculations.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -14,10 +19,29 @@ import pandas as pd
 import streamlit as st
 
 from ssp_config import get_config_paths, load_config
+from utils import parse_filename, build_sample_id, normalize_load_column
+
+# Configure module logger
+logger = logging.getLogger(__name__)
+
+# Re-export for backward compatibility
+__all__ = [
+    "load_app_config",
+    "load_results_csv",
+    "parse_filename",
+    "build_sample_id",
+    "get_metadata_for_sample",
+    "load_raw_curve",
+    "compute_manual_stiffness",
+    "save_manual_result",
+    "save_manual_result_db",
+    "load_manual_results_csv",
+]
 
 
 @st.cache_data(show_spinner=False)
 def load_app_config() -> Tuple[Dict, Path, Dict[str, Path]]:
+    """Load application configuration from config.json."""
     config, data_root, _ = load_config()
     paths = get_config_paths(config, data_root)
     return config, data_root, paths
@@ -25,53 +49,62 @@ def load_app_config() -> Tuple[Dict, Path, Dict[str, Path]]:
 
 @st.cache_data(show_spinner=False)
 def load_results_csv(results_path: Path) -> pd.DataFrame:
+    """Load analysis results from CSV file."""
     if not results_path.exists():
+        logger.warning(f"Results file not found: {results_path}")
         return pd.DataFrame()
     return pd.read_csv(results_path)
 
 
-def parse_filename(filename: str) -> Tuple[Optional[str], str]:
-    condition = "Unknown"
-    if "_NO" in filename:
-        condition = "NO"
-    elif "_OPER" in filename:
-        condition = "OPER"
-
-    subject_id = None
-    for part in filename.replace(".csv", "").split("_"):
-        if part.startswith(("B", "C", "D")) and len(part) <= 3:
-            subject_id = part
-            break
-
-    return subject_id, condition
-
-
-def build_sample_id(filename: str) -> Optional[str]:
-    subject_id, condition = parse_filename(filename)
-    if not subject_id or condition == "Unknown":
-        return None
-    suffix = "NO" if condition == "NO" else "OPER"
-    return f"{subject_id}_{suffix}"
-
-
 def get_metadata_for_sample(db_path: Path, sample_id: str) -> Dict:
+    """
+    Retrieve sample metadata from the database.
+    
+    Args:
+        db_path: Path to the SQLite database
+        sample_id: Sample identifier (e.g., 'D1_NO')
+        
+    Returns:
+        Dictionary with sample metadata, or empty dict if not found.
+    """
+    if not db_path.exists():
+        logger.debug(f"Database not found: {db_path}")
+        return {}
+    
     query = "SELECT * FROM v_sample_details WHERE sample_id = ?"
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        try:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
             row = conn.execute(query, (sample_id,)).fetchone()
             return dict(row) if row else {}
-        except sqlite3.OperationalError:
-            return {}
+    except sqlite3.OperationalError as e:
+        logger.warning(f"Database query failed: {e}")
+        return {}
 
 
 def load_raw_curve(file_path: Path) -> Optional[pd.DataFrame]:
+    """
+    Load raw load-displacement curve data from CSV.
+    
+    Args:
+        file_path: Path to the CSV data file
+        
+    Returns:
+        DataFrame with normalized columns, or None if file not found.
+    """
     if not file_path.exists():
+        logger.warning(f"Raw data file not found: {file_path}")
         return None
-    df = pd.read_csv(file_path)
-    if "LoadN" not in df.columns and "LoadkN" in df.columns:
-        df["LoadN"] = df["LoadkN"] * 1000
-    return df
+    
+    try:
+        df = pd.read_csv(file_path)
+        return normalize_load_column(df)
+    except pd.errors.EmptyDataError:
+        logger.error(f"Empty data file: {file_path}")
+        return None
+    except pd.errors.ParserError as e:
+        logger.error(f"CSV parsing error: {e}")
+        return None
 
 
 def compute_manual_stiffness(
@@ -79,11 +112,25 @@ def compute_manual_stiffness(
     y: np.ndarray,
     indices: List[int]
 ) -> Optional[Dict[str, float]]:
+    """
+    Compute stiffness from user-selected data points.
+    
+    Args:
+        x: Full displacement array
+        y: Full load array
+        indices: List of selected point indices
+        
+    Returns:
+        Dictionary with slope, intercept, r2, start_idx, end_idx
+        or None if insufficient points selected.
+    """
     if len(indices) < 2:
         return None
+    
     idx = sorted(set(indices))
     x_sel = x[idx]
     y_sel = y[idx]
+    
     if len(x_sel) < 2:
         return None
 
@@ -103,9 +150,21 @@ def compute_manual_stiffness(
 
 
 def save_manual_result(results_dir: Path, record: Dict) -> Path:
+    """
+    Save a manual stiffness result to CSV.
+    
+    Args:
+        results_dir: Directory to save results
+        record: Dictionary with result data
+        
+    Returns:
+        Path to the saved CSV file.
+    """
     results_dir.mkdir(parents=True, exist_ok=True)
     output_path = results_dir / "manual_stiffness.csv"
-    timestamp = datetime.utcnow().isoformat(timespec="seconds")
+    
+    # Use timezone-aware UTC timestamp
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     record_with_time = {"timestamp_utc": timestamp, **record}
 
     if output_path.exists():
@@ -117,10 +176,17 @@ def save_manual_result(results_dir: Path, record: Dict) -> Path:
         df = pd.DataFrame([record_with_time])
 
     df.to_csv(output_path, index=False)
+    logger.info(f"Saved manual result to {output_path}")
     return output_path
 
 
 def ensure_manual_results_table(db_path: Path) -> None:
+    """
+    Ensure the manual_results table exists in the database.
+    
+    Args:
+        db_path: Path to the SQLite database
+    """
     create_sql = """
     CREATE TABLE IF NOT EXISTS manual_results (
         manual_result_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,12 +203,26 @@ def ensure_manual_results_table(db_path: Path) -> None:
         FOREIGN KEY (sample_id) REFERENCES samples(sample_id)
     );
     """
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(create_sql)
-        conn.commit()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(create_sql)
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Failed to create manual_results table: {e}")
+        raise
 
 
-def save_manual_result_db(db_path: Path, record: Dict) -> None:
+def save_manual_result_db(db_path: Path, record: Dict) -> Optional[int]:
+    """
+    Save a manual stiffness result to the database.
+    
+    Args:
+        db_path: Path to the SQLite database
+        record: Dictionary with result data
+        
+    Returns:
+        The ID of the inserted row, or None if insertion failed.
+    """
     ensure_manual_results_table(db_path)
     insert_sql = """
     INSERT INTO manual_results
@@ -150,22 +230,37 @@ def save_manual_result_db(db_path: Path, record: Dict) -> None:
      selection_end_idx, manual_stiffness_N_mm, manual_r2, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(insert_sql, (
-            record.get("sample_id"),
-            record.get("filename"),
-            record.get("reviewer"),
-            record.get("session_id"),
-            record.get("selection_start_idx"),
-            record.get("selection_end_idx"),
-            record.get("manual_stiffness_N_mm"),
-            record.get("manual_r2"),
-            record.get("notes")
-        ))
-        conn.commit()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute(insert_sql, (
+                record.get("sample_id"),
+                record.get("filename"),
+                record.get("reviewer"),
+                record.get("session_id"),
+                record.get("selection_start_idx"),
+                record.get("selection_end_idx"),
+                record.get("manual_stiffness_N_mm"),
+                record.get("manual_r2"),
+                record.get("notes")
+            ))
+            conn.commit()
+            logger.info(f"Saved manual result to database (id={cursor.lastrowid})")
+            return cursor.lastrowid
+    except sqlite3.Error as e:
+        logger.error(f"Failed to save manual result to database: {e}")
+        return None
 
 
 def load_manual_results_csv(results_dir: Path) -> pd.DataFrame:
+    """
+    Load manual stiffness results from CSV.
+    
+    Args:
+        results_dir: Directory containing the results
+        
+    Returns:
+        DataFrame with manual results, or empty DataFrame if file not found.
+    """
     output_path = results_dir / "manual_stiffness.csv"
     if not output_path.exists():
         return pd.DataFrame()

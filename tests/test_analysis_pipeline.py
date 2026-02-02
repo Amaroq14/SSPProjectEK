@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "Data"
 sys.path.insert(0, str(DATA_DIR))
@@ -57,5 +58,5 @@ def test_find_best_stiffness_linear():
     slope, intercept, r2, start_idx, end_idx = find_best_stiffness(
         x, y, window_size=5, r2_threshold=0.99
     )
-    assert slope == np.approx(2.0, rel=1e-3)
-    assert r2 == np.approx(1.0, rel=1e-6)
+    assert slope == pytest.approx(2.0, rel=1e-3)
+    assert r2 == pytest.approx(1.0, rel=1e-6)

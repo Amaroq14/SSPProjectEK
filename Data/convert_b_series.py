@@ -11,12 +11,16 @@ Usage:
     python convert_b_series.py
 """
 
-import os
+from __future__ import annotations
+
+import logging
 import re
 from pathlib import Path
-from datetime import datetime
+from typing import List, Optional, Tuple
 
 from ssp_config import load_config, get_config_paths
+
+logger = logging.getLogger(__name__)
 
 # Paths from config
 CONFIG, DATA_ROOT, _ = load_config()
@@ -32,18 +36,34 @@ MONTH_MAP = {
 }
 
 
-def parse_date(date_str):
-    """Convert DD-Mon-YY to YYYY-MM-DD format."""
+def parse_date(date_str: str) -> str:
+    """
+    Convert DD-Mon-YY to YYYY-MM-DD format.
+    
+    Args:
+        date_str: Date string in DD-Mon-YY format (e.g., '08-Dec-22')
+        
+    Returns:
+        Date string in YYYY-MM-DD format, or default if parsing fails.
+    """
+    default_date = "2022-12-08"
+    
+    if not date_str or not isinstance(date_str, str):
+        return default_date
+    
+    parts = date_str.split('-')
+    if len(parts) != 3:
+        logger.debug(f"Invalid date format: {date_str}")
+        return default_date
+    
     try:
-        parts = date_str.split('-')
-        if len(parts) == 3:
-            day = parts[0].zfill(2)
-            month = MONTH_MAP.get(parts[1], '12')
-            year = '20' + parts[2] if len(parts[2]) == 2 else parts[2]
-            return f"{year}-{month}-{day}"
-    except:
-        pass
-    return "2022-12-08"  # Default fallback
+        day = parts[0].zfill(2)
+        month = MONTH_MAP.get(parts[1], '12')
+        year = '20' + parts[2] if len(parts[2]) == 2 else parts[2]
+        return f"{year}-{month}-{day}"
+    except (IndexError, TypeError) as e:
+        logger.debug(f"Failed to parse date '{date_str}': {e}")
+        return default_date
 
 
 def convert_b_series_file(input_path, output_dir):

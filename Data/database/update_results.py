@@ -99,10 +99,7 @@ def main():
             test_date = None
             parts = filename.split('_')
             if len(parts) >= 2:
-                try:
-                    test_date = parts[1]  # e.g., '2024-10-26'
-                except:
-                    pass
+                test_date = parts[1]  # e.g., '2024-10-26'
             
             # Add test record
             test_id = db.add_test(
