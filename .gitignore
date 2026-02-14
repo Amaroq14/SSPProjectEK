@@ -1,28 +1,41 @@
+# ===========================================
+# SSP Biomechanics Analysis - Git Ignore
+# ===========================================
+
+# ----- Python -----
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
 .venv/
 venv/
+ENV/
 .env
-.DS_Store
-Thumbs.db
+
+# ----- Jupyter -----
 .ipynb_checkpoints/
 
-# Large raw assets and legacy data
-CADs/
+# ----- OS Files -----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----- IDE -----
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# ----- Large / archival folders -----
+Raw_Data/
 Photos/
-SSP_Project/
-SSP_Project/Test Raw Data/
-SSP_Project/Raw_Data/
-SSP_Project/Data Processed/
-SSP_Project/resources/
-SSP_Project/Test_data.mat
+CADs/
+MATLAB/
 
-Data/Clean_raw_data/
-Data/Ferousis-Koumantou_MTS/
+# ----- Generated output (reproducible from notebook) -----
+Results/
 
-# Generated outputs
-Data/Results/manual_stiffness.csv
-Data/database/exports/
+# ----- Database files -----
+*.db
